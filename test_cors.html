@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CORS Test - RecovAI</title>
+</head>
+<body>
+    <h1>RecovAI CORS Test</h1>
+    <button onclick="testLogin()">Test Login API</button>
+    <button onclick="testHealth()">Test Health API</button>
+    <pre id="output"></pre>
+
+    <script>
+        const output = document.getElementById('output');
+        
+        async function testHealth() {
+            output.textContent = 'Testing health endpoint...\n';
+            try {
+                const response = await fetch('http://localhost:5000/api/health', {
+                    method: 'GET',
+                    credentials: 'include'
+                });
+                const data = await response.json();
+                output.textContent += 'SUCCESS: ' + JSON.stringify(data, null, 2);
+            } catch (error) {
+                output.textContent += 'ERROR: ' + error.message;
+            }
+        }
+
+        async function testLogin() {
+            output.textContent = 'Testing login endpoint...\n';
+            try {
+                const response = await fetch('http://localhost:5000/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        email: 'dr.smith@hospital.com',
+                        password: 'doctor123'
+                    })
+                });
+                
+                output.textContent += 'Response status: ' + response.status + '\n';
+                const data = await response.json();
+                output.textContent += 'SUCCESS: ' + JSON.stringify(data, null, 2);
+            } catch (error) {
+                output.textContent += 'ERROR: ' + error.message + '\n';
+                output.textContent += 'This might be a CORS issue!\n';
+            }
+        }
+    </script>
+</body>
+</html>
