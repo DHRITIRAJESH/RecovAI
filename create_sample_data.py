@@ -283,5 +283,173 @@ def create_sample_patients(doctor_email='dr.smith@hospital.com'):
     print()
 
 
+def create_icu_sample_data():
+    """Create sample ICU beds and admin user"""
+    print("\n🏥 Creating ICU Management Sample Data")
+    print("=" * 60)
+    
+    from database import create_admin_user, create_icu_bed
+    
+    # 1. Create admin user
+    try:
+        admin_id = create_admin_user(
+            email='admin@hospital.com',
+            password='admin123',
+            full_name='Hospital Administrator',
+            role='admin'
+        )
+        print(f"✅ Created admin user: admin@hospital.com (password: admin123)")
+        print(f"   Admin ID: {admin_id}")
+    except Exception as e:
+        if 'UNIQUE constraint failed' in str(e):
+            print(f"⚠️  Admin user already exists: admin@hospital.com")
+        else:
+            print(f"❌ Error creating admin: {e}")
+    
+    # 2. Create ICU beds with varying equipment
+    icu_beds = [
+        {
+            'room_number': '101A',
+            'floor_number': 1,
+            'equipment_type': 'Ventilator, Dialysis, Advanced Monitoring',
+            'proximity_to_nursing_station': 1,  # Very close
+            'has_ventilator': 1,
+            'has_dialysis': 1,
+            'has_ecmo': 0,
+            'isolation_room': 0,
+            'bed_cost_per_day': 4500.0
+        },
+        {
+            'room_number': '101B',
+            'floor_number': 1,
+            'equipment_type': 'Ventilator, ECMO, Advanced Monitoring',
+            'proximity_to_nursing_station': 1,
+            'has_ventilator': 1,
+            'has_dialysis': 0,
+            'has_ecmo': 1,
+            'isolation_room': 0,
+            'bed_cost_per_day': 5000.0
+        },
+        {
+            'room_number': '102A',
+            'floor_number': 1,
+            'equipment_type': 'Ventilator, Advanced Monitoring',
+            'proximity_to_nursing_station': 2,
+            'has_ventilator': 1,
+            'has_dialysis': 0,
+            'has_ecmo': 0,
+            'isolation_room': 0,
+            'bed_cost_per_day': 3500.0
+        },
+        {
+            'room_number': '102B',
+            'floor_number': 1,
+            'equipment_type': 'Dialysis, Advanced Monitoring',
+            'proximity_to_nursing_station': 2,
+            'has_ventilator': 0,
+            'has_dialysis': 1,
+            'has_ecmo': 0,
+            'isolation_room': 0,
+            'bed_cost_per_day': 3000.0
+        },
+        {
+            'room_number': '103',
+            'floor_number': 1,
+            'equipment_type': 'Standard ICU Monitoring',
+            'proximity_to_nursing_station': 3,
+            'has_ventilator': 0,
+            'has_dialysis': 0,
+            'has_ecmo': 0,
+            'isolation_room': 0,
+            'bed_cost_per_day': 2500.0
+        },
+        {
+            'room_number': '104',
+            'floor_number': 1,
+            'equipment_type': 'Standard ICU Monitoring',
+            'proximity_to_nursing_station': 3,
+            'has_ventilator': 0,
+            'has_dialysis': 0,
+            'has_ecmo': 0,
+            'isolation_room': 0,
+            'bed_cost_per_day': 2500.0
+        },
+        {
+            'room_number': '201',
+            'floor_number': 2,
+            'equipment_type': 'Isolation Room, Ventilator',
+            'proximity_to_nursing_station': 2,
+            'has_ventilator': 1,
+            'has_dialysis': 0,
+            'has_ecmo': 0,
+            'isolation_room': 1,
+            'bed_cost_per_day': 4000.0
+        },
+        {
+            'room_number': '202',
+            'floor_number': 2,
+            'equipment_type': 'Isolation Room, Standard Monitoring',
+            'proximity_to_nursing_station': 2,
+            'has_ventilator': 0,
+            'has_dialysis': 0,
+            'has_ecmo': 0,
+            'isolation_room': 1,
+            'bed_cost_per_day': 3000.0
+        },
+        {
+            'room_number': '203',
+            'floor_number': 2,
+            'equipment_type': 'Ventilator, Dialysis',
+            'proximity_to_nursing_station': 4,
+            'has_ventilator': 1,
+            'has_dialysis': 1,
+            'has_ecmo': 0,
+            'isolation_room': 0,
+            'bed_cost_per_day': 4000.0
+        },
+        {
+            'room_number': '204',
+            'floor_number': 2,
+            'equipment_type': 'Standard ICU Monitoring',
+            'proximity_to_nursing_station': 5,
+            'has_ventilator': 0,
+            'has_dialysis': 0,
+            'has_ecmo': 0,
+            'isolation_room': 0,
+            'bed_cost_per_day': 2500.0
+        }
+    ]
+    
+    created_beds = 0
+    for bed_data in icu_beds:
+        try:
+            bed_id = create_icu_bed(bed_data)
+            print(f"✅ Created ICU Bed: Room {bed_data['room_number']}, Floor {bed_data['floor_number']}")
+            print(f"   Equipment: {bed_data['equipment_type']}")
+            print(f"   Cost: ${bed_data['bed_cost_per_day']}/day")
+            print()
+            created_beds += 1
+        except Exception as e:
+            print(f"❌ Error creating bed {bed_data['room_number']}: {e}")
+    
+    print("=" * 60)
+    print(f"\n📊 ICU Setup Summary:")
+    print(f"   ✅ Created: {created_beds} ICU beds")
+    print(f"   🏥 Total Capacity: {created_beds} beds")
+    print(f"   💰 Cost Range: $2,500 - $5,000 per day")
+    print(f"\n🔑 Admin Login:")
+    print(f"   Email: admin@hospital.com")
+    print(f"   Password: admin123")
+    print(f"\n💡 ICU Features:")
+    print(f"   • Real-time bed status tracking")
+    print(f"   • Smart bed allocation algorithm")
+    print(f"   • Predictive ICU forecasting")
+    print(f"   • Equipment matching (Ventilator, Dialysis, ECMO)")
+    print(f"   • Isolation room capabilities")
+    print()
+
+
 if __name__ == '__main__':
     create_sample_patients()
+    create_icu_sample_data()
+

@@ -1,6 +1,7 @@
 """
 Blood Report Vitals Extractor
 Supports multiple extraction methods for PDF/Image blood reports
+Integrates with pdf_ocr_tool.py for enhanced PDF OCR capabilities
 """
 
 import os
@@ -10,6 +11,8 @@ from io import BytesIO
 from PIL import Image
 import PyPDF2
 import pdf2image
+import tempfile
+
 try:
     import pytesseract
     TESSERACT_AVAILABLE = True
@@ -26,6 +29,14 @@ try:
         GEMINI_AVAILABLE = False
 except ImportError:
     GEMINI_AVAILABLE = False
+
+# Try to import pdf_ocr_tool
+try:
+    from pdf_ocr_tool import run_pdf_ocr
+    PDF_OCR_TOOL_AVAILABLE = True
+except ImportError:
+    PDF_OCR_TOOL_AVAILABLE = False
+    print("⚠️  pdf_ocr_tool.py not available")
 
 
 class BloodReportExtractor:
@@ -72,17 +83,30 @@ class BloodReportExtractor:
         if GEMINI_AVAILABLE and file_extension in ['pdf', 'jpg', 'jpeg', 'png']:
             print("🔍 Trying Gemini Vision API...")
             result = self._extract_with_gemini(file_path_or_bytes, file_extension)
-            if result['status'] == 'success' and result['confidence'] > 70:
+            if result['status'] == 'success' and result['confidence'] > 50:  # Lower threshold
                 result['method'] = 'gemini_vision'
                 return result
+            else:
+                print(f"⚠️ Gemini extraction result: {result.get('message', 'Unknown error')}")
         
-        # For images, try OCR
+        # For images, try OCR if available
         if file_extension in ['jpg', 'jpeg', 'png']:
-            print("🔍 Trying Tesseract OCR for image...")
-            result = self._extract_from_image_ocr(file_path_or_bytes)
-            if result['status'] == 'success':
-                result['method'] = 'tesseract_ocr'
-                return result
+            if TESSERACT_AVAILABLE:
+                print("🔍 Trying Tesseract OCR for image...")
+                result = self._extract_from_image_ocr(file_path_or_bytes)
+                if result['status'] == 'success':
+                    result['method'] = 'tesseract_ocr'
+                    return result
+            else:
+                print("⚠️ Tesseract OCR not available")
+                if not GEMINI_AVAILABLE:
+                    return {
+                        'status': 'error',
+                        'message': 'Image extraction requires either Gemini API key or Tesseract OCR installation. Please set GEMINI_API_KEY environment variable.',
+                        'values': {},
+                        'confidence': 0,
+                        'method': 'none'
+                    }
         
         # For PDFs, try text extraction first
         if file_extension == 'pdf':
@@ -148,11 +172,51 @@ class BloodReportExtractor:
             return {'status': 'error', 'message': str(e), 'values': {}, 'confidence': 0}
     
     def _extract_from_pdf_ocr(self, file_bytes):
-        """Convert PDF to images and extract using OCR"""
+        """Convert PDF to images and extract using OCR - Enhanced with pdf_ocr_tool"""
         if not TESSERACT_AVAILABLE:
             return {'status': 'error', 'message': 'Tesseract not available', 'values': {}, 'confidence': 0}
         
         try:
+            # If pdf_ocr_tool is available, use it for better OCR results
+            if PDF_OCR_TOOL_AVAILABLE:
+                print("🔍 Using pdf_ocr_tool for enhanced OCR...")
+                
+                # Save bytes to temp file
+                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
+                    if isinstance(file_bytes, bytes):
+                        tmp_file.write(file_bytes)
+                    else:
+                        with open(file_bytes, 'rb') as f:
+                            tmp_file.write(f.read())
+                    tmp_path = tmp_file.name
+                
+                try:
+                    # Run pdf_ocr_tool
+                    text_file, pdf_file = run_pdf_ocr(tmp_path)
+                    
+                    # Read extracted text
+                    with open(text_file, 'r', encoding='utf-8') as f:
+                        text = f.read()
+                    
+                    # Clean up temp files
+                    os.unlink(tmp_path)
+                    os.unlink(text_file)
+                    if os.path.exists(pdf_file):
+                        os.unlink(pdf_file)
+                    
+                    # Clean up any temporary page images
+                    for i in range(20):  # Check up to 20 pages
+                        temp_img = f"page_{i}.jpg"
+                        if os.path.exists(temp_img):
+                            os.unlink(temp_img)
+                    
+                    return self._parse_text_for_vitals(text)
+                except Exception as e:
+                    print(f"pdf_ocr_tool error: {e}, falling back to standard OCR")
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+            
+            # Standard OCR method (fallback)
             # Convert PDF to images
             if isinstance(file_bytes, bytes):
                 images = pdf2image.convert_from_bytes(file_bytes)
@@ -196,7 +260,11 @@ class BloodReportExtractor:
             img_byte_arr = img_byte_arr.getvalue()
             
             # Call Gemini Vision
-            model = genai.GenerativeModel('gemini-2.0-flash')
+            try:
+                model = genai.GenerativeModel('gemini-1.5-flash')
+            except:
+                # Fallback to older model
+                model = genai.GenerativeModel('gemini-pro-vision')
             
             prompt = """You are a medical data extraction expert. Analyze this blood report image and extract the following vital values:
 1. Hemoglobin (Hb/HGB) in g/dL

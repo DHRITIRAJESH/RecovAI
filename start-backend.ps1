@@ -40,5 +40,11 @@ Write-Host "Press Ctrl+C to stop the server" -ForegroundColor Yellow
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Start the Flask server
-python app.py
+# Start the Flask server with TensorFlow from virtual environment
+if (Test-Path "venv\Scripts\python.exe") {
+    Write-Host "✓ Using virtual environment with TensorFlow ML models" -ForegroundColor Green
+    ..\backend\venv\Scripts\python app.py
+} else {
+    Write-Host "⚠ Virtual environment not found, using system Python" -ForegroundColor Yellow
+    python app.py
+}
