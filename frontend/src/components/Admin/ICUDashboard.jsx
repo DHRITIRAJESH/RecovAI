@@ -71,15 +71,48 @@ export default function ICUDashboard() {
     }
   };
 
+  const handleAutoAllocate = async () => {
+    try {
+      // Simulate successful allocation
+      const waitingCount = waitlist.length;
+      const canAllocate = Math.min(waitingCount, status.available_beds || 100);
+      
+      if (canAllocate === 0) {
+        alert('No patients to allocate or no beds available');
+        return;
+      }
+      
+      const response = await fetch('http://localhost:5000/api/admin/manual-allocate-bed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ count: 1 })
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        alert(`✅ Bed allocated successfully!\n${data.message}`);
+        fetchICUData(); // Refresh data
+      } else {
+        alert('Failed to allocate bed: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Manual allocation failed:', err);
+      alert('Failed to allocate bed');
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await fetch('http://localhost:5000/api/admin/logout', {
         method: 'POST',
         credentials: 'include',
       });
-      navigate('/admin/login');
+      window.location.href = '/admin/login';
     } catch (err) {
       console.error('Logout failed:', err);
+      window.location.href = '/admin/login';
     }
   };
 
@@ -106,6 +139,15 @@ export default function ICUDashboard() {
           <div className="flex justify-between items-center">
             <h1 className="text-2xl font-bold text-gray-900">ICU Bed Management</h1>
             <div className="flex items-center gap-4">
+              <button
+                onClick={handleAutoAllocate}
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                Allocate Bed
+              </button>
               <div className="text-right">
                 <p className="text-sm font-semibold text-gray-900">{admin?.full_name}</p>
                 <p className="text-xs text-gray-500">{admin?.role}</p>
@@ -163,7 +205,6 @@ export default function ICUDashboard() {
                 { id: 'overview', label: 'Overview' },
                 { id: 'waitlist', label: `Waitlist (${waitlist.length})` },
                 { id: 'forecast', label: '7-Day Forecast' },
-                { id: 'beds', label: 'Bed Status' },
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -185,7 +226,6 @@ export default function ICUDashboard() {
             {activeTab === 'overview' && <OverviewTab icuData={icuData} />}
             {activeTab === 'waitlist' && <WaitlistTab waitlist={waitlist} />}
             {activeTab === 'forecast' && <ForecastTab forecast={forecast} />}
-            {activeTab === 'beds' && <BedsTab beds={beds} allocations={allocations} />}
           </div>
         </div>
       </div>

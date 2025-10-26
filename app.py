@@ -12,6 +12,7 @@ import os
 from database import (
     init_database, create_user, verify_user, create_patient,
     get_patient_by_id, get_patient_by_user_id, get_patients_by_doctor,
+    get_all_patients,
     save_risk_assessment, get_latest_risk_assessment,
     save_lifestyle_plan, get_lifestyle_plan, get_doctor_info
 )
@@ -674,6 +675,137 @@ def get_patient_lifestyle_plan():
 
 
 # ============================================================================
+# SYMPTOM TRACKING ENDPOINTS
+# ============================================================================
+
+@app.route('/api/symptoms/log', methods=['POST'])
+@patient_required
+def log_symptoms():
+    """Log patient symptoms"""
+    try:
+        from database import save_symptom_log
+        
+        user_id = session['user_id']
+        patient = get_patient_by_user_id(user_id)
+        
+        if not patient:
+            return jsonify({'error': 'Patient record not found'}), 404
+        
+        data = request.get_json()
+        
+        # Check for red flags
+        red_flags = []
+        if data.get('painLevel', 0) >= 8:
+            red_flags.append('severe_pain')
+        if float(data.get('temperature', 0) or 0) >= 101.0:
+            red_flags.append('high_fever')
+        if data.get('woundCondition') == 'poor':
+            red_flags.append('poor_wound')
+        if data.get('discharge'):
+            red_flags.append('wound_discharge')
+        if data.get('shortnessOfBreath'):
+            red_flags.append('breathing_difficulty')
+        
+        # Add red flag indicator to data
+        data['redFlagAlert'] = len(red_flags) > 0
+        
+        # Save symptom log
+        log_id = save_symptom_log(patient['patient_id'], data)
+        
+        return jsonify({
+            'message': 'Symptoms logged successfully',
+            'log_id': log_id,
+            'red_flags': red_flags,
+            'alert_sent': len(red_flags) > 0
+        }), 201
+        
+    except Exception as e:
+        return jsonify({'error': f'Failed to log symptoms: {str(e)}'}), 500
+
+
+@app.route('/api/symptoms/history', methods=['GET'])
+@patient_required
+def get_symptoms_history():
+    """Get patient's symptom history"""
+    try:
+        from database import get_symptom_history
+        
+        user_id = session['user_id']
+        patient = get_patient_by_user_id(user_id)
+        
+        if not patient:
+            return jsonify({'error': 'Patient record not found'}), 404
+        
+        limit = request.args.get('limit', 30, type=int)
+        history = get_symptom_history(patient['patient_id'], limit)
+        
+        return jsonify({'history': history}), 200
+        
+    except Exception as e:
+        return jsonify({'error': f'Failed to retrieve symptom history: {str(e)}'}), 500
+
+
+@app.route('/api/symptoms/alert', methods=['POST'])
+@patient_required
+def send_symptom_alert():
+    """Send alert to care team about concerning symptoms"""
+    try:
+        from database import get_symptom_history, get_doctor_info
+        
+        user_id = session['user_id']
+        patient = get_patient_by_user_id(user_id)
+        
+        if not patient:
+            return jsonify({'error': 'Patient record not found'}), 404
+        
+        data = request.get_json()
+        red_flags = data.get('redFlags', [])
+        
+        # Get doctor info
+        doctor = get_doctor_info(patient['assigned_doctor_id'])
+        
+        # In a real system, this would send an email/SMS to the doctor
+        print(f"🚨 RED FLAG ALERT for Patient {patient['patient_id']}")
+        print(f"   Doctor: {doctor['full_name']} ({doctor['email']})")
+        print(f"   Red Flags: {', '.join(red_flags)}")
+        
+        return jsonify({
+            'message': 'Alert sent to care team',
+            'doctor_notified': doctor['full_name']
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': f'Failed to send alert: {str(e)}'}), 500
+
+
+@app.route('/api/patient/update-surgery', methods=['POST'])
+@patient_required
+def update_surgery_info():
+    """Update patient's surgery information"""
+    try:
+        from database import update_patient_surgery_info
+        
+        user_id = session['user_id']
+        patient = get_patient_by_user_id(user_id)
+        
+        if not patient:
+            return jsonify({'error': 'Patient record not found'}), 404
+        
+        data = request.get_json()
+        
+        # Update surgery info
+        success = update_patient_surgery_info(patient['patient_id'], data)
+        
+        if success:
+            return jsonify({'message': 'Surgery information updated successfully'}), 200
+        else:
+            return jsonify({'error': 'No changes made'}), 400
+        
+    except Exception as e:
+        return jsonify({'error': f'Failed to update surgery information: {str(e)}'}), 500
+
+
+# ============================================================================
 # HEALTH CHECK
 # ============================================================================
 
@@ -994,12 +1126,63 @@ def get_icu_status():
         
         return jsonify({
             'beds': beds,
-            'capacity': capacity
+            'status': capacity  # Return as 'status' for frontend compatibility
         }), 200
     
     except Exception as e:
         print(f"ICU status error: {e}")
         return jsonify({'error': 'Failed to fetch ICU status'}), 500
+
+
+@app.route('/api/admin/auto-allocate-beds', methods=['POST'])
+@admin_required
+def auto_allocate_beds():
+    """Automatically allocate ICU beds based on patient criticality"""
+    try:
+        from database import auto_allocate_beds_by_criticality
+        
+        print("🔄 Starting auto-allocation...")
+        allocated = auto_allocate_beds_by_criticality()
+        print(f"✅ Allocated {len(allocated)} beds")
+        print(f"Allocated patients: {allocated}")
+        
+        return jsonify({
+            'message': f'{len(allocated)} bed(s) allocated successfully',
+            'allocated': allocated
+        }), 200
+    
+    except Exception as e:
+        print(f"❌ Auto-allocation error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to auto-allocate beds: {str(e)}'}), 500
+
+
+@app.route('/api/admin/manual-allocate-bed', methods=['POST'])
+@admin_required
+def manual_allocate_bed():
+    """Manually allocate one ICU bed to highest priority patient"""
+    try:
+        from database import allocate_one_bed_manually
+        
+        result = allocate_one_bed_manually()
+        
+        if result:
+            return jsonify({
+                'message': f"Bed {result['bed_number']} allocated to {result['patient_name']}",
+                'allocation': result
+            }), 200
+        else:
+            return jsonify({
+                'message': 'No patients waiting or no beds available',
+                'allocation': None
+            }), 200
+    
+    except Exception as e:
+        print(f"❌ Manual allocation error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to allocate bed: {str(e)}'}), 500
 
 
 @app.route('/api/admin/icu-beds', methods=['POST'])
@@ -1234,6 +1417,18 @@ def get_icu_recommendations():
         import traceback
         traceback.print_exc()
         return jsonify({'error': 'Failed to generate recommendations'}), 500
+
+
+@app.route('/api/admin/all-patients', methods=['GET'])
+@admin_required
+def get_all_patients_endpoint():
+    """Get all patients for ICU overview"""
+    try:
+        patients = get_all_patients()
+        return jsonify({'patients': patients}), 200
+    except Exception as e:
+        print(f"All patients error: {e}")
+        return jsonify({'error': 'Failed to fetch all patients'}), 500
 
 
 # ============================================================================

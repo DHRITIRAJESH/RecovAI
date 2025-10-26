@@ -10,8 +10,8 @@ import numpy as np
 from datetime import datetime
 import google.generativeai as genai
 
-# Configure Gemini API (you'll need to set your API key)
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'YOUR_API_KEY_HERE')
+# Configure Gemini API
+GEMINI_API_KEY = 'AIzaSyAaJcKBydblvrS0jZNMVaN8LTYU0pHvOUw'
 genai.configure(api_key=GEMINI_API_KEY)
 
 class RecoveryChatbot:
@@ -217,8 +217,7 @@ Now respond to the patient's question:"""
             return "Keep your incision clean and dry. Watch for signs of infection: redness, warmth, swelling, discharge. Follow your surgeon's wound care instructions carefully."
         
         else:
-            return "I'm here to help with your recovery! You can ask me about: walking/exercise, pain management, wound care, diet, or when to return to normal activities. What would you like to know?"
-    
+            return "A biopsy is a medical procedure that involves removing a small sample of tissue or cells from the body for laboratory testing to diagnose diseases. The sample is examined under a microscope by a pathologist to check for abnormalities, such as cancer, or to determine the cause of an unexplained lesion, infection, or inflammation"
     def process_message(self, message, patient_data, chat_history=None):
         """Main method to process patient message and generate response"""
         

@@ -121,6 +121,29 @@ def init_database():
             )
         ''')
         
+        # Symptom logs table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS symptom_logs (
+                log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                patient_id INTEGER NOT NULL,
+                logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                pain_level INTEGER CHECK(pain_level BETWEEN 0 AND 10),
+                temperature REAL,
+                wound_condition TEXT CHECK(wound_condition IN ('good', 'fair', 'poor')),
+                sleep_quality INTEGER CHECK(sleep_quality BETWEEN 1 AND 10),
+                hours_slept REAL,
+                swelling INTEGER DEFAULT 0 CHECK(swelling IN (0, 1)),
+                redness INTEGER DEFAULT 0 CHECK(redness IN (0, 1)),
+                discharge INTEGER DEFAULT 0 CHECK(discharge IN (0, 1)),
+                nausea INTEGER DEFAULT 0 CHECK(nausea IN (0, 1)),
+                dizziness INTEGER DEFAULT 0 CHECK(dizziness IN (0, 1)),
+                shortness_of_breath INTEGER DEFAULT 0 CHECK(shortness_of_breath IN (0, 1)),
+                notes TEXT,
+                red_flag_alert INTEGER DEFAULT 0 CHECK(red_flag_alert IN (0, 1)),
+                FOREIGN KEY (patient_id) REFERENCES patients(patient_id)
+            )
+        ''')
+        
         # Admin users table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS admin_users (
@@ -306,6 +329,39 @@ def get_patients_by_doctor(doctor_id):
                 END,
                 p.surgery_date ASC
         ''', (doctor_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_all_patients():
+    """Get all patients, sorted by risk level (highest first)"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT 
+                p.*, 
+                u.full_name as patient_name, 
+                u.email,
+                ra.overall_risk,
+                ra.assessed_at,
+                doc.full_name as doctor_name
+            FROM patients p
+            JOIN users u ON p.user_id = u.user_id
+            LEFT JOIN users doc ON p.assigned_doctor_id = doc.user_id
+            LEFT JOIN (
+                SELECT patient_id, overall_risk, assessed_at,
+                       ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY assessed_at DESC) as rn
+                FROM risk_assessments
+            ) ra ON p.patient_id = ra.patient_id AND ra.rn = 1
+            ORDER BY 
+                CASE 
+                    WHEN ra.overall_risk = 'CRITICAL' THEN 1
+                    WHEN ra.overall_risk = 'HIGH' THEN 2
+                    WHEN ra.overall_risk = 'MODERATE' THEN 3
+                    WHEN ra.overall_risk = 'LOW' THEN 4
+                    ELSE 5
+                END,
+                p.surgery_date ASC
+        ''')
         return [dict(row) for row in cursor.fetchall()]
 
 
@@ -572,28 +628,33 @@ def get_available_icu_beds(filters=None):
 
 
 def get_icu_capacity():
-    """Get current ICU capacity statistics"""
+    """Get current ICU capacity statistics - Fixed at 100 total beds"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT 
-                COUNT(*) as total_beds,
-                SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) as available,
-                SUM(CASE WHEN status = 'occupied' THEN 1 ELSE 0 END) as occupied,
-                SUM(CASE WHEN status = 'maintenance' THEN 1 ELSE 0 END) as maintenance,
-                SUM(CASE WHEN status = 'cleaning' THEN 1 ELSE 0 END) as cleaning
+                SUM(CASE WHEN status = 'occupied' THEN 1 ELSE 0 END) as occupied
             FROM icu_beds
         ''')
         result = cursor.fetchone()
         
         if result:
             data = dict(result)
-            if data['total_beds'] > 0:
-                data['utilization_rate'] = round((data['occupied'] / data['total_beds']) * 100, 1)
-            else:
-                data['utilization_rate'] = 0
+            # Fixed total beds to 100
+            data['total_beds'] = 100
+            occupied = data['occupied'] or 0
+            data['available_beds'] = 100 - occupied
+            data['occupied_beds'] = occupied
+            data['utilization_rate'] = round((occupied / 100) * 100, 1)
             return data
-        return None
+        
+        # Default if no data
+        return {
+            'total_beds': 100,
+            'available_beds': 100,
+            'occupied_beds': 0,
+            'utilization_rate': 0
+        }
 
 
 def save_icu_prediction(patient_id, assessment_id, prediction_data):
@@ -723,25 +784,46 @@ def add_to_icu_waitlist(patient_id, prediction_id, priority):
 
 
 def get_icu_waitlist():
-    """Get current ICU waitlist sorted by priority"""
+    """Get current ICU waitlist sorted by priority - returns patients needing ICU beds"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
+        # Get patients who need ICU but don't have a bed yet
         cursor.execute('''
             SELECT 
-                w.*,
+                p.patient_id,
                 u.full_name as patient_name,
                 p.surgery_type,
                 p.surgery_date,
-                ip.risk_level,
-                ip.predicted_icu_days,
-                ip.ventilator_needed,
-                ip.dialysis_needed
-            FROM icu_waitlist w
-            JOIN patients p ON w.patient_id = p.patient_id
+                ra.overall_risk as risk_level,
+                ra.assessed_at,
+                CASE 
+                    WHEN ra.overall_risk = 'CRITICAL' THEN 100
+                    WHEN ra.overall_risk = 'HIGH' THEN 75
+                    WHEN ra.overall_risk = 'MODERATE' THEN 50
+                    ELSE 25
+                END as priority_score,
+                CAST((julianday('now') - julianday(ra.assessed_at)) * 24 AS INTEGER) as wait_hours,
+                90 as icu_probability
+            FROM patients p
             JOIN users u ON p.user_id = u.user_id
-            LEFT JOIN icu_predictions ip ON w.prediction_id = ip.prediction_id
-            WHERE w.status = 'waiting'
-            ORDER BY w.priority DESC, w.added_at
+            LEFT JOIN (
+                SELECT patient_id, overall_risk, assessed_at,
+                       ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY assessed_at DESC) as rn
+                FROM risk_assessments
+            ) ra ON p.patient_id = ra.patient_id AND ra.rn = 1
+            WHERE p.patient_id NOT IN (
+                SELECT patient_id FROM icu_beds WHERE patient_id IS NOT NULL AND status = 'occupied'
+            )
+            AND p.status = 'scheduled'
+            AND ra.overall_risk IN ('CRITICAL', 'HIGH', 'MODERATE')
+            ORDER BY 
+                CASE 
+                    WHEN ra.overall_risk = 'CRITICAL' THEN 1
+                    WHEN ra.overall_risk = 'HIGH' THEN 2
+                    WHEN ra.overall_risk = 'MODERATE' THEN 3
+                    ELSE 4
+                END,
+                p.surgery_date ASC
         ''')
         return [dict(row) for row in cursor.fetchall()]
 
@@ -811,4 +893,278 @@ def get_expected_discharges_today():
             ORDER BY b.expected_discharge
         ''')
         return [dict(row) for row in cursor.fetchall()]
+
+
+# ========================================
+# SYMPTOM TRACKING FUNCTIONS
+# ========================================
+
+def save_symptom_log(patient_id, symptom_data):
+    """Save a symptom log entry for a patient"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO symptom_logs (
+                patient_id, pain_level, temperature, wound_condition,
+                sleep_quality, hours_slept, swelling, redness, discharge,
+                nausea, dizziness, shortness_of_breath, notes, red_flag_alert
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            patient_id,
+            symptom_data.get('painLevel'),
+            symptom_data.get('temperature'),
+            symptom_data.get('woundCondition'),
+            symptom_data.get('sleepQuality'),
+            symptom_data.get('hoursSlept'),
+            1 if symptom_data.get('swelling') else 0,
+            1 if symptom_data.get('redness') else 0,
+            1 if symptom_data.get('discharge') else 0,
+            1 if symptom_data.get('nausea') else 0,
+            1 if symptom_data.get('dizziness') else 0,
+            1 if symptom_data.get('shortnessOfBreath') else 0,
+            symptom_data.get('notes'),
+            1 if symptom_data.get('redFlagAlert') else 0
+        ))
+        return cursor.lastrowid
+
+
+def get_symptom_history(patient_id, limit=30):
+    """Get symptom log history for a patient"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT 
+                log_id,
+                DATE(logged_at) as date,
+                TIME(logged_at) as time,
+                pain_level as painLevel,
+                temperature,
+                wound_condition as woundCondition,
+                sleep_quality as sleepQuality,
+                hours_slept as hoursSlept,
+                swelling,
+                redness,
+                discharge,
+                nausea,
+                dizziness,
+                shortness_of_breath as shortnessOfBreath,
+                notes,
+                red_flag_alert as redFlagAlert
+            FROM symptom_logs
+            WHERE patient_id = ?
+            ORDER BY logged_at DESC
+            LIMIT ?
+        ''', (patient_id, limit))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_recent_red_flags(patient_id, days=7):
+    """Get recent red flag symptom alerts for a patient"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT 
+                log_id,
+                logged_at,
+                pain_level,
+                temperature,
+                wound_condition,
+                discharge,
+                shortness_of_breath,
+                notes
+            FROM symptom_logs
+            WHERE patient_id = ?
+            AND red_flag_alert = 1
+            AND logged_at >= datetime('now', '-' || ? || ' days')
+            ORDER BY logged_at DESC
+        ''', (patient_id, days))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def update_patient_surgery_info(patient_id, surgery_data):
+    """Update patient surgery information"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Build dynamic UPDATE query
+        update_fields = []
+        values = []
+        
+        if 'surgery_type' in surgery_data:
+            update_fields.append('surgery_type = ?')
+            values.append(surgery_data['surgery_type'])
+        if 'surgery_date' in surgery_data:
+            update_fields.append('surgery_date = ?')
+            values.append(surgery_data['surgery_date'])
+        if 'status' in surgery_data:
+            update_fields.append('status = ?')
+            values.append(surgery_data['status'])
+        
+        if not update_fields:
+            return
+        
+        values.append(patient_id)
+        query = f"UPDATE patients SET {', '.join(update_fields)} WHERE patient_id = ?"
+        
+        cursor.execute(query, values)
+        return cursor.rowcount > 0
+
+
+def auto_allocate_beds_by_criticality():
+    """Automatically allocate ICU beds to patients based on criticality"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            print("📊 Checking for patients needing ICU beds...")
+            
+            # Get waiting patients ordered by criticality
+            cursor.execute('''
+                SELECT 
+                    p.patient_id,
+                    u.full_name as patient_name,
+                    ra.overall_risk,
+                    CASE 
+                        WHEN ra.overall_risk = 'CRITICAL' THEN 1
+                        WHEN ra.overall_risk = 'HIGH' THEN 2
+                        WHEN ra.overall_risk = 'MODERATE' THEN 3
+                        ELSE 4
+                    END as priority_order
+                FROM patients p
+                JOIN users u ON p.user_id = u.user_id
+                LEFT JOIN (
+                    SELECT patient_id, overall_risk,
+                           ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY assessed_at DESC) as rn
+                    FROM risk_assessments
+                ) ra ON p.patient_id = ra.patient_id AND ra.rn = 1
+                WHERE p.patient_id NOT IN (
+                    SELECT patient_id FROM icu_beds WHERE patient_id IS NOT NULL AND status = 'occupied'
+                )
+                AND p.status = 'scheduled'
+                AND ra.overall_risk IN ('CRITICAL', 'HIGH', 'MODERATE')
+                ORDER BY priority_order ASC, p.surgery_date ASC
+            ''')
+            
+            waiting_patients = [dict(row) for row in cursor.fetchall()]
+            print(f"👥 Found {len(waiting_patients)} patients needing beds")
+            
+            if not waiting_patients:
+                print("⚠️  No patients in queue")
+                return []
+            
+            # Get current occupied count - Fixed SQL
+            cursor.execute("SELECT COUNT(*) as occupied FROM icu_beds WHERE status = 'occupied' AND patient_id IS NOT NULL")
+            result = cursor.fetchone()
+            occupied = result['occupied'] if result else 0
+            print(f"🏥 Current occupied beds: {occupied}")
+            
+            # Calculate available beds (out of 100 total)
+            available_count = 100 - occupied
+            print(f"✅ Available beds: {available_count}")
+            
+            if available_count <= 0:
+                print("❌ No beds available!")
+                return []  # No beds available
+            
+            # Allocate beds to highest priority patients
+            allocated = []
+            for i, patient in enumerate(waiting_patients):
+                if i >= available_count:
+                    print(f"⚠️  Reached capacity limit at {i} allocations")
+                    break  # No more beds available
+                
+                # Create a bed record for this patient
+                bed_number = occupied + i + 1
+                print(f"🛏️  Allocating bed ICU-{bed_number} to {patient['patient_name']} (Risk: {patient['overall_risk']})")
+                
+                cursor.execute('''
+                    INSERT INTO icu_beds (
+                        room_number, floor_number, status, patient_id, admitted_at
+                    ) VALUES (?, ?, 'occupied', ?, CURRENT_TIMESTAMP)
+                ''', (f"ICU-{bed_number}", 1, patient['patient_id']))
+                
+                allocated.append({
+                    'patient_id': patient['patient_id'],
+                    'patient_name': patient['patient_name'],
+                    'risk_level': patient['overall_risk'],
+                    'bed_number': f"ICU-{bed_number}"
+                })
+            
+            conn.commit()
+            print(f"✅ Successfully allocated {len(allocated)} beds")
+            return allocated
+            
+    except Exception as e:
+        print(f"❌ Database error in auto_allocate_beds_by_criticality: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+def allocate_one_bed_manually():
+    """Allocate one bed to the highest priority patient"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Get highest priority patient waiting
+        cursor.execute('''
+            SELECT 
+                p.patient_id,
+                u.full_name as patient_name,
+                ra.overall_risk,
+                CASE 
+                    WHEN ra.overall_risk = 'CRITICAL' THEN 1
+                    WHEN ra.overall_risk = 'HIGH' THEN 2
+                    WHEN ra.overall_risk = 'MODERATE' THEN 3
+                    ELSE 4
+                END as priority_order
+            FROM patients p
+            JOIN users u ON p.user_id = u.user_id
+            LEFT JOIN (
+                SELECT patient_id, overall_risk,
+                       ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY assessed_at DESC) as rn
+                FROM risk_assessments
+            ) ra ON p.patient_id = ra.patient_id AND ra.rn = 1
+            WHERE p.patient_id NOT IN (
+                SELECT patient_id FROM icu_beds WHERE patient_id IS NOT NULL AND status = 'occupied'
+            )
+            AND p.status = 'scheduled'
+            AND ra.overall_risk IN ('CRITICAL', 'HIGH', 'MODERATE', 'LOW')
+            ORDER BY priority_order ASC, p.surgery_date ASC
+            LIMIT 1
+        ''')
+        
+        patient = cursor.fetchone()
+        
+        if not patient:
+            return None  # No patients waiting
+        
+        patient = dict(patient)
+        
+        # Get current occupied count
+        cursor.execute("SELECT COUNT(*) as occupied FROM icu_beds WHERE status = 'occupied' AND patient_id IS NOT NULL")
+        result = cursor.fetchone()
+        occupied = result['occupied'] if result else 0
+        
+        # Check if beds available
+        if occupied >= 100:
+            return None  # No beds available
+        
+        # Allocate bed
+        bed_number = occupied + 1
+        cursor.execute('''
+            INSERT INTO icu_beds (
+                room_number, floor_number, status, patient_id, admitted_at
+            ) VALUES (?, ?, 'occupied', ?, CURRENT_TIMESTAMP)
+        ''', (f"ICU-{bed_number}", 1, patient['patient_id']))
+        
+        conn.commit()
+        
+        return {
+            'patient_id': patient['patient_id'],
+            'patient_name': patient['patient_name'],
+            'risk_level': patient['overall_risk'],
+            'bed_number': f"ICU-{bed_number}"
+        }
+
 

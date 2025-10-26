@@ -5,6 +5,9 @@ function MySurgery() {
   const [surgeryInfo, setSurgeryInfo] = useState(null)
   const [assessment, setAssessment] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [isEditing, setIsEditing] = useState(false)
+  const [notes, setNotes] = useState('')
+  const [saveMessage, setSaveMessage] = useState('')
 
   useEffect(() => {
     fetchSurgeryInfo()
@@ -28,6 +31,21 @@ function MySurgery() {
       setAssessment(response.data)
     } catch (error) {
       console.error('Failed to fetch assessment:', error)
+    }
+  }
+
+  const handleSaveNotes = async () => {
+    try {
+      await axios.post('/api/patient/update-surgery', {
+        notes: notes
+      })
+      setSaveMessage('✅ Notes saved successfully!')
+      setIsEditing(false)
+      setTimeout(() => setSaveMessage(''), 3000)
+    } catch (error) {
+      console.error('Failed to save notes:', error)
+      setSaveMessage('❌ Failed to save notes. Please try again.')
+      setTimeout(() => setSaveMessage(''), 3000)
     }
   }
 
@@ -66,6 +84,69 @@ function MySurgery() {
           Your surgical team is here to support you every step of the way. 
           Below you'll find important information about your upcoming procedure.
         </p>
+      </div>
+
+      {/* Personal Notes Section */}
+      <div className="card">
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <h3 className="text-xl font-bold text-gray-900">My Personal Notes</h3>
+            <p className="text-sm text-gray-600">Keep track of questions, concerns, or information</p>
+          </div>
+          {!isEditing && (
+            <button
+              onClick={() => setIsEditing(true)}
+              className="btn-secondary flex items-center space-x-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              <span>Add/Edit Notes</span>
+            </button>
+          )}
+        </div>
+
+        {saveMessage && (
+          <div className={`mb-4 p-3 rounded-lg ${
+            saveMessage.includes('✅') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+          }`}>
+            {saveMessage}
+          </div>
+        )}
+
+        {isEditing ? (
+          <div className="space-y-4">
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows="6"
+              placeholder="Write your notes here... Things to ask your doctor, symptoms to mention, medications to remember, etc."
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+            />
+            <div className="flex space-x-3">
+              <button
+                onClick={handleSaveNotes}
+                className="btn-primary"
+              >
+                Save Notes
+              </button>
+              <button
+                onClick={() => setIsEditing(false)}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-gray-50 rounded-lg p-4 min-h-[100px]">
+            {notes ? (
+              <p className="text-gray-700 whitespace-pre-wrap">{notes}</p>
+            ) : (
+              <p className="text-gray-400 italic">No notes yet. Click "Add/Edit Notes" to add your personal notes.</p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Surgery Details */}

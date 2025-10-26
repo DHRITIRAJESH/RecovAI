@@ -72,9 +72,10 @@ export default function ICUDashboard() {
         method: 'POST',
         credentials: 'include',
       });
-      navigate('/admin/login');
+      window.location.href = '/admin/login';
     } catch (err) {
       console.error('Logout failed:', err);
+      window.location.href = '/admin/login';
     }
   };
 

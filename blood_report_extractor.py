@@ -8,16 +8,35 @@ import os
 import re
 import json
 from io import BytesIO
-from PIL import Image
-import PyPDF2
-import pdf2image
 import tempfile
+
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    print("⚠️  Pillow (PIL) not available")
+
+try:
+    import PyPDF2
+    PYPDF2_AVAILABLE = True
+except ImportError:
+    PYPDF2_AVAILABLE = False
+    print("⚠️  PyPDF2 not available")
+
+try:
+    import pdf2image
+    PDF2IMAGE_AVAILABLE = True
+except ImportError:
+    PDF2IMAGE_AVAILABLE = False
+    print("⚠️  pdf2image not available")
 
 try:
     import pytesseract
     TESSERACT_AVAILABLE = True
 except ImportError:
     TESSERACT_AVAILABLE = False
+    print("⚠️  pytesseract not available")
 
 try:
     import google.generativeai as genai
@@ -133,6 +152,9 @@ class BloodReportExtractor:
     
     def _extract_from_pdf_text(self, file_bytes):
         """Extract text from digital PDF"""
+        if not PYPDF2_AVAILABLE:
+            return {'status': 'error', 'message': 'PyPDF2 not installed. Run: pip install PyPDF2', 'values': {}, 'confidence': 0}
+        
         try:
             if isinstance(file_bytes, bytes):
                 pdf_file = BytesIO(file_bytes)
@@ -156,7 +178,10 @@ class BloodReportExtractor:
     def _extract_from_image_ocr(self, file_bytes):
         """Extract text from image using Tesseract OCR"""
         if not TESSERACT_AVAILABLE:
-            return {'status': 'error', 'message': 'Tesseract not available', 'values': {}, 'confidence': 0}
+            return {'status': 'error', 'message': 'pytesseract not installed. Run: pip install pytesseract', 'values': {}, 'confidence': 0}
+        
+        if not PIL_AVAILABLE:
+            return {'status': 'error', 'message': 'Pillow not installed. Run: pip install Pillow', 'values': {}, 'confidence': 0}
         
         try:
             if isinstance(file_bytes, bytes):
@@ -174,7 +199,13 @@ class BloodReportExtractor:
     def _extract_from_pdf_ocr(self, file_bytes):
         """Convert PDF to images and extract using OCR - Enhanced with pdf_ocr_tool"""
         if not TESSERACT_AVAILABLE:
-            return {'status': 'error', 'message': 'Tesseract not available', 'values': {}, 'confidence': 0}
+            return {'status': 'error', 'message': 'pytesseract not installed. Run: pip install pytesseract', 'values': {}, 'confidence': 0}
+        
+        if not PDF2IMAGE_AVAILABLE:
+            return {'status': 'error', 'message': 'pdf2image not installed. Run: pip install pdf2image. Also requires poppler: https://github.com/oschwartz10612/poppler-windows/releases/', 'values': {}, 'confidence': 0}
+        
+        if not PIL_AVAILABLE:
+            return {'status': 'error', 'message': 'Pillow not installed. Run: pip install Pillow', 'values': {}, 'confidence': 0}
         
         try:
             # If pdf_ocr_tool is available, use it for better OCR results
@@ -237,11 +268,17 @@ class BloodReportExtractor:
     def _extract_with_gemini(self, file_bytes, file_extension):
         """Extract using Google Gemini Vision API"""
         if not GEMINI_AVAILABLE:
-            return {'status': 'error', 'message': 'Gemini not available', 'values': {}, 'confidence': 0}
+            return {'status': 'error', 'message': 'Gemini API not configured. Set GEMINI_API_KEY environment variable.', 'values': {}, 'confidence': 0}
+        
+        if not PIL_AVAILABLE:
+            return {'status': 'error', 'message': 'Pillow not installed. Run: pip install Pillow', 'values': {}, 'confidence': 0}
         
         try:
             # Prepare image
             if file_extension == 'pdf':
+                if not PDF2IMAGE_AVAILABLE:
+                    return {'status': 'error', 'message': 'pdf2image required for PDF processing with Gemini', 'values': {}, 'confidence': 0}
+                
                 # Convert first page to image
                 if isinstance(file_bytes, bytes):
                     images = pdf2image.convert_from_bytes(file_bytes, first_page=1, last_page=1)
